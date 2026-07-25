@@ -12,5 +12,10 @@ allowed_signers
 bin/gh-real
 bin/op
 
+# ── Runtime artifacts written by session-init (not source) ───────────
+bin/gitleaks
+bin/*.new
+.githooks-template/
+
 # ── Ephemeral repo checkouts ─────────────────────────────────────────
 repos/

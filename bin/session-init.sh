@@ -126,4 +126,89 @@ for d in "$M"/repos/*/; do
 done
 [ "$found" -eq 0 ] && echo "(no repos cloned yet)"
 
+# 6. Secret scanning. Install a pinned gitleaks and seed a pre-commit hook.
+#    The hook is a local first line only (bypassable with --no-verify); the
+#    real guarantee is the required "gitleaks" status check on the protected
+#    main of claudedowling/cowork-tooling. The hook resolves gitleaks relative
+#    to the repo's own location (checkouts live at <mount>/repos/<name>, so
+#    ../../bin/gitleaks is this mount's copy), so it survives the per-session
+#    mount path changing without being rewritten.
+echo "== secret scanning (gitleaks) =="
+GITLEAKS_VERSION=8.18.4
+GL="$M/bin/gitleaks"
+if [ -x "$GL" ] && "$GL" version 2>/dev/null | grep -qx "$GITLEAKS_VERSION"; then
+  echo "gitleaks $GITLEAKS_VERSION present"
+else
+  gl_url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+  if curl -sSL "$gl_url" | tar -xz -C "$M/bin" gitleaks 2>/dev/null && [ -x "$GL" ]; then
+    chmod +x "$GL"; echo "installed gitleaks $GITLEAKS_VERSION"
+  else
+    echo "WARNING: could not install gitleaks from $gl_url — pre-commit scanning unavailable" >&2
+  fi
+fi
+
+TMPL="$M/.githooks-template/hooks"
+mkdir -p "$TMPL"
+cat > "$TMPL/pre-commit" <<'HOOK'
+#!/bin/sh
+# Block commits that contain secrets (gitleaks). Local first line only,
+# bypassable with --no-verify. gitleaks is resolved relative to the repo:
+# checkouts live at <mount>/repos/<name>, so ../../bin/gitleaks is this
+# mount's copy. No session path is hardcoded.
+repo="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+gl="$repo/../../bin/gitleaks"
+if [ ! -x "$gl" ]; then
+  echo "pre-commit: gitleaks not found at $gl (run session-init.sh); refusing commit" >&2
+  exit 1
+fi
+exec "$gl" protect --staged --redact --no-banner
+HOOK
+chmod +x "$TMPL/pre-commit"
+git config --global init.templateDir "$M/.githooks-template"
+echo "pre-commit template installed (init.templateDir)"
+
+# Backfill: checkouts cloned before the template existed have no hook. Seed
+# only where absent so a repo's own pre-commit is never clobbered.
+for d in "$M"/repos/*/; do
+  [ -d "$d/.git" ] || continue
+  if [ ! -e "$d/.git/hooks/pre-commit" ]; then
+    cp "$TMPL/pre-commit" "$d/.git/hooks/pre-commit" && chmod +x "$d/.git/hooks/pre-commit"
+    echo "  seeded pre-commit in $(basename "$d")"
+  fi
+done
+
+# 7. Deploy bin/ as a read-only mirror of cowork-tooling's main. The live
+#    bin/ is generated from main; never hand-edit it — changes go through the
+#    repo (branch -> gitleaks check -> auto-merge to main). Uses cp (a plain
+#    write), never unlink/rename, because the Cowork mount rejects those
+#    (the same reason git lock sweeps need the delete approval). The running
+#    script is never overwritten in place: if session-init.sh itself changed
+#    on main it is staged as .new for the next run to pick up.
+echo "== deploy bin/ from cowork-tooling main =="
+TOOLING="$M/repos/cowork-tooling"
+if [ -d "$TOOLING/.git" ]; then
+  "$M/bin/repo-latest" cowork-tooling >/dev/null 2>&1 || true
+  onbranch="$(GIT_OPTIONAL_LOCKS=0 git -C "$TOOLING" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
+  dirty="$(GIT_OPTIONAL_LOCKS=0 git -C "$TOOLING" status --porcelain 2>/dev/null)"
+  if [ "$onbranch" = "main" ] && [ -z "$dirty" ]; then
+    self="$(basename "${BASH_SOURCE[0]}")"
+    for f in "$TOOLING"/bin/*; do
+      b="$(basename "$f")"
+      if [ "$b" = "$self" ]; then
+        if ! cmp -s "$f" "$M/bin/$b"; then
+          cp "$f" "$M/bin/$b.new"
+          echo "  $b changed on main -> staged $b.new (re-run session-init to apply)"
+        fi
+      else
+        cp "$f" "$M/bin/$b" && chmod +x "$M/bin/$b"
+      fi
+    done
+    echo "bin/ mirrored from main ($(GIT_OPTIONAL_LOCKS=0 git -C "$TOOLING" rev-parse --short HEAD))"
+  else
+    echo "cowork-tooling on '$onbranch'${dirty:+ (dirty)}; skipping bin/ deploy" >&2
+  fi
+else
+  echo "cowork-tooling not cloned; run \$M/bin/use-repo cowork-tooling then re-run to enable read-only bin deploy" >&2
+fi
+
 echo "== done. Reminder: prefix read-only git with GIT_OPTIONAL_LOCKS=0; branch + PR, never push to the default branch. =="
