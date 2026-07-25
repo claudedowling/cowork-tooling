@@ -1,0 +1,16 @@
+# ── Secrets and machine-local config — NEVER commit ──────────────────
+.credentials/
+.op-env
+*_token
+*.pem
+id_*
+*-signing
+*-signing.pub
+allowed_signers
+
+# ── Large third-party binaries (download separately; see README) ─────
+bin/gh-real
+bin/op
+
+# ── Ephemeral repo checkouts ─────────────────────────────────────────
+repos/

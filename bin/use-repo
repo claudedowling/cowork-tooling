@@ -1,0 +1,59 @@
+#!/bin/sh
+# use-repo <name>|<owner/name> [branch]  - one command to get a repo ready.
+#
+# The single front door: you don't decide clone-vs-update. It:
+#   - clones the repo if it's not in repos/ yet (owner resolved claudedowling
+#     first, then stevedowling; errors on a genuine cross-account duplicate);
+#   - updates it if it is present (fetch + fast-forward);
+#   - checks out [branch] if given.
+#
+# Safety rules, always: never merges (fast-forward only), never force, never
+# pushes, and never switches away from or updates over uncommitted work.
+#
+# Assumes session-init.sh has run this session (credential helper).
+set -u
+M="$(cd "$(dirname "$0")/.." && pwd)"
+
+arg="${1:-}"
+branch="${2:-}"
+[ -n "$arg" ] || { echo "usage: use-repo <name>|<owner/name> [branch]" >&2; exit 2; }
+
+case "$arg" in */*) name="${arg##*/}" ;; *) name="$arg" ;; esac
+repo="$M/repos/$name"
+
+fresh=0
+if [ ! -d "$repo/.git" ]; then
+  "$M/bin/repo-clone" "$arg" || exit 1     # clones + reports state
+  fresh=1
+fi
+
+if [ -n "$branch" ]; then
+  cur="$(GIT_OPTIONAL_LOCKS=0 git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  if [ "$cur" != "$branch" ]; then
+    if [ -n "$(GIT_OPTIONAL_LOCKS=0 git -C "$repo" status --porcelain --untracked-files=no)" ]; then
+      echo "uncommitted changes to tracked files; commit or stash before switching to $branch" >&2
+      exit 1
+    fi
+    git -C "$repo" fetch --prune origin >/dev/null 2>&1
+    if ! git -C "$repo" checkout "$branch" 2>/dev/null; then
+      echo "branch '$branch' not found locally or on origin" >&2
+      exit 1
+    fi
+  fi
+  "$M/bin/repo-latest" "$name"
+elif [ "$fresh" -eq 0 ]; then
+  "$M/bin/repo-latest" "$name"
+fi
+
+# Mnemonic project-memory check. A repo has project memory when it carries a
+# committed .mnemonic/ directory. If it doesn't, nudge the agent to offer setup.
+if [ ! -d "$repo/.mnemonic" ]; then
+  echo
+  echo "mnemonic: no project memory is set up for '$name' (.mnemonic/ absent)."
+  echo "  You must ask the user if they would like to set one up."
+  echo "  To set up: call mnemonic-local set_project_memory_policy with"
+  echo "    cwd=/home/steve/Documents/Claude/cowork-tooling/repos/$name  defaultScope=project"
+  echo "  while on a feature branch (mnemonic blocks writes on the default branch)."
+  echo "  Project notes then live in .mnemonic/notes/ and ride the PR."
+fi
+

@@ -1,0 +1,12 @@
+#!/bin/sh
+# Self-injecting gh wrapper. Runs the real gh (gh-real) through op-run.sh so
+# GH_TOKEN (from 1Password) is present without an explicit op-run.sh prefix.
+#
+# Because git's credential helper is pointed at THIS wrapper
+# (`!$M/bin/gh auth git-credential`, set by session-init.sh), plain git
+# clone/fetch/push to GitHub also authenticate with no prefix — the helper
+# self-injects the token. So there is no separate git wrapper.
+#
+# The real gh binary lives alongside this script as gh-real.
+M="$(cd "$(dirname "$0")/.." && pwd)"
+exec "$M/bin/op-run.sh" "$M/bin/gh-real" "$@"
