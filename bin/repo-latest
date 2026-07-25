@@ -1,0 +1,81 @@
+#!/bin/sh
+# repo-latest <name>  -  get latest for a repo in <M>/repos/<name>, from any cwd.
+#
+# Derives the Cowork mount from its own location, so run it as
+# `<M>/bin/repo-latest nas-docker` from anywhere. Behaviour is deliberately
+# safe: it fetches the current branch from origin, reports state, and
+# fast-forwards ONLY when the tree is clean and a fast-forward is possible.
+# It never merges and never touches uncommitted work.
+#
+# Uses FETCH_HEAD (fetches the current branch by name) rather than
+# remote-tracking refs, so it works even on checkouts cloned without a
+# standard `+refs/heads/*:refs/remotes/origin/*` fetch refspec.
+#
+# Assumes session-init.sh has run this session (git credential helper + the
+# once-per-session allow_cowork_file_delete approval).
+set -u
+M="$(cd "$(dirname "$0")/.." && pwd)"
+
+list_repos() { ls -1 "$M/repos" 2>/dev/null || echo "(none)"; }
+
+name="${1:-}"
+if [ -z "$name" ]; then
+  echo "usage: repo-latest <name>" >&2
+  echo "available:" >&2; list_repos >&2
+  exit 2
+fi
+
+repo="$M/repos/$name"
+if [ ! -d "$repo/.git" ]; then
+  echo "no git repo at $repo" >&2
+  echo "available:" >&2; list_repos >&2
+  exit 1
+fi
+
+echo "== $name =="
+if ! git -C "$repo" remote | grep -qx origin; then
+  echo "no 'origin' remote configured; nothing to fetch" >&2
+  exit 1
+fi
+
+branch="$(GIT_OPTIONAL_LOCKS=0 git -C "$repo" rev-parse --abbrev-ref HEAD)"
+dirty="$(GIT_OPTIONAL_LOCKS=0 git -C "$repo" status --porcelain | head -1)"
+printf 'branch: %s\n' "$branch"
+[ -n "$dirty" ] && echo "working tree: DIRTY (uncommitted changes)" || echo "working tree: clean"
+
+# Fetch this branch's tip from origin into FETCH_HEAD (quiet on success).
+if ! out="$(git -C "$repo" fetch --prune origin "$branch" 2>&1)"; then
+  case "$out" in
+    *"couldn't find remote ref"*)
+      def="$(git -C "$repo" ls-remote --symref origin HEAD 2>/dev/null | awk '/^ref:/{sub("refs/heads/","",$2);print $2;exit}')"
+      echo "branch '$branch' is not on origin; nothing to fast-forward."
+      [ -n "$def" ] && echo "origin's default branch is '$def' (this checkout may be on the wrong branch or missing tracking)."
+      exit 0 ;;
+    *)
+      printf '%s\n' "$out" | sed 's/^/  /' >&2
+      echo "fetch failed (auth? run session-init.sh first)" >&2
+      exit 1 ;;
+  esac
+fi
+
+counts="$(GIT_OPTIONAL_LOCKS=0 git -C "$repo" rev-list --left-right --count FETCH_HEAD...HEAD 2>/dev/null)"
+behind="$(printf '%s' "$counts" | awk '{print $1+0}')"
+ahead="$(printf '%s' "$counts" | awk '{print $2+0}')"
+printf 'vs origin/%s: behind %s, ahead %s\n' "$branch" "$behind" "$ahead"
+
+if [ "${behind:-0}" -eq 0 ]; then
+  echo "already up to date"; exit 0
+fi
+if [ -n "$dirty" ]; then
+  echo "behind by $behind but tree is dirty; not pulling (commit or stash first)"; exit 0
+fi
+if [ "${ahead:-0}" -gt 0 ]; then
+  echo "diverged (ahead $ahead, behind $behind); not fast-forwardable, left as-is"; exit 0
+fi
+
+echo "fast-forwarding $branch by $behind..."
+if git -C "$repo" merge --ff-only FETCH_HEAD; then
+  echo "updated."
+else
+  echo "fast-forward failed, left as-is" >&2; exit 1
+fi

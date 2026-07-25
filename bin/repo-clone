@@ -1,0 +1,80 @@
+#!/bin/sh
+# repo-clone <name> | <owner>/<name>  - clone a GitHub repo into <M>/repos/<name>.
+#
+# Enforces the "clone into repos/" convention and produces a normal checkout
+# (origin + tracking) so `repo-latest` works afterwards. Refuses to overwrite
+# an existing checkout.
+#
+# A bare <name> is resolved across the owners in REPO_OWNERS (config.sh), in
+# order: exactly one owner has it -> clone; several have it -> refuse and ask
+# you to qualify; none -> suggest fuzzy matches. It never auto-clones a guess.
+# Pass <owner>/<name> to be explicit (any owner).
+#
+# Assumes session-init.sh has run this session (git credential helper).
+set -u
+M="$(cd "$(dirname "$0")/.." && pwd)"
+GH="$M/bin/gh"
+
+# Instance config: REPO_OWNERS lists candidate owners for a bare name.
+CONFIG="$M/config.sh"; [ -f "$CONFIG" ] && . "$CONFIG"
+OWNERS="${REPO_OWNERS:?set REPO_OWNERS in config.sh}"
+
+norm() { printf %s "$1" | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9'; }
+
+arg="${1:-}"
+[ -n "$arg" ] || { echo "usage: repo-clone <name> | <owner>/<name>" >&2; exit 2; }
+
+case "$arg" in
+  */*) owner="${arg%%/*}"; name="${arg##*/}" ;;
+  *)   owner="";          name="$arg" ;;
+esac
+
+dest="$M/repos/$name"
+if [ -e "$dest" ]; then
+  echo "already exists: repos/$name" >&2
+  echo "use 'repo-latest $name' to update it, or remove it first to re-clone." >&2
+  exit 1
+fi
+
+# Resolve a bare name by asking each candidate owner for the repo's CANONICAL
+# nameWithOwner. This collapses GitHub redirects (a transferred repo answers on
+# both its old and new owner path but resolves to one canonical repo), so only
+# genuinely distinct repos count as ambiguous.
+if [ -z "$owner" ]; then
+  canon="$(for o in $OWNERS; do
+    "$GH" repo view "$o/$name" --json nameWithOwner -q .nameWithOwner 2>/dev/null
+  done | grep -v '^$' | sort -u)"
+  n="$(printf '%s\n' "$canon" | grep -c .)"
+  if [ "$n" -eq 1 ]; then
+    owner="${canon%%/*}"; name="${canon##*/}"
+  elif [ "$n" -gt 1 ]; then
+    echo "'$name' matches multiple repos:" >&2
+    printf '%s\n' "$canon" | sed 's/^/  /' >&2
+    echo "qualify it, e.g. repo-clone $(printf '%s\n' "$canon" | head -1)" >&2
+    exit 1
+  else
+    echo "no repo named '$name' found under: $OWNERS" >&2
+    q="$(norm "$name")"
+    matches="$(for o in $OWNERS; do
+      "$GH" repo list "$o" --limit 200 --json name --jq '.[].name' 2>/dev/null | while IFS= read -r r; do
+        case "$(norm "$r")" in *"$q"*) printf '%s/%s\n' "$o" "$r" ;; esac
+      done
+    done)"
+    if [ -n "$matches" ]; then
+      echo "did you mean:" >&2; printf '%s\n' "$matches" | sed 's/^/  /' >&2
+    fi
+    echo "(or pass owner/name explicitly)" >&2
+    exit 1
+  fi
+fi
+
+url="https://github.com/$owner/$name.git"
+echo "cloning $owner/$name -> repos/$name"
+if git -C "$M/repos" clone "$url" "$name"; then
+  echo
+  "$M/bin/repo-latest" "$name" 2>/dev/null || true   # confirm it's set up and current
+  exit 0
+fi
+echo >&2
+echo "clone failed for $owner/$name (access? run session-init.sh first)" >&2
+exit 1
