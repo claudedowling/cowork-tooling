@@ -1,0 +1,85 @@
+# Custom Semgrep/Opengrep ruleset for bin/.
+#
+# bin/ is tiny and every script sits on the trust boundary: it runs with
+# push credentials and a 1Password service-account token. The public
+# community shell rulesets are generic (piped-curl, raw eval); these rules
+# are written against this repo's *actual* risk patterns so the floor
+# actually covers something specific to us, not just textbook examples.
+#
+# Scope: run against bin/ only (see .github/workflow-proposals/semgrep.yml).
+# These are pattern/regex based, not a substitute for the semantic review
+# in the Claude security-reviewer workflow (e.g. "git-credential-op now
+# also POSTs the token somewhere" needs intent, not just a grep).
+rules:
+  - id: bin-piped-remote-exec
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      Piping a remote download straight into a shell (curl|sh, wget|bash)
+      executes whatever the URL currently serves, unreviewed and
+      unpinned. Download to a file, verify it (checksum/signature), then
+      execute explicitly — this is exactly how gitleaks itself is fetched
+      in .github/workflows/gitleaks.yml, minus the pipe-to-shell.
+    metadata:
+      category: security
+      risk: remote-code-execution
+    patterns:
+      - pattern-regex: '\b(curl|wget)\b[^\n|]*\|\s*(sudo\s+)?(sh|bash|zsh|\$SHELL)\b'
+
+  - id: bin-eval-of-expansion
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      `eval` of a variable or command substitution can execute
+      attacker- or PR-controlled content. Avoid eval; if truly
+      unavoidable, constrain the input tightly and leave a comment
+      explaining why it's safe.
+    metadata:
+      category: security
+      risk: remote-code-execution
+    patterns:
+      - pattern-regex: '\beval\b\s+"?\$'
+
+  - id: bin-rm-rf-on-variable
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      `rm` with a recursive+force flag on a variable path is destructive
+      if the variable is ever empty, unset, or influenced by input this
+      script doesn't fully control. Quote it and validate it is
+      non-empty and within an expected directory first.
+    metadata:
+      category: security
+      risk: destructive-operation
+    patterns:
+      - pattern-regex: '\brm\s+(-\w*[rR]\w*[fF]\w*|-\w*[fF]\w*[rR]\w*|--recursive\s+--force|--force\s+--recursive)\s+"?\$'
+
+  - id: bin-token-var-network-sink
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      A credential/token variable appears on the same line as a network
+      command (curl/wget/nc/ssh). git-credential-op is the one place a
+      resolved token should exist, and its only sink is git's
+      credential-helper stdout protocol. Any new network sink for a
+      token variable is exactly the "tampered credential helper /
+      exfiltration" scenario this check exists to catch — needs explicit
+      human review, not an automated pass.
+    metadata:
+      category: security
+      risk: credential-exfiltration
+    patterns:
+      - pattern-regex: '\b(curl|wget|nc|ssh)\b.*\$\{?(GH_TOKEN|OP_SERVICE_ACCOUNT_TOKEN|op_token|token|tok|password)\}?\b'
+
+  - id: bin-base64-decode-exec
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      Decoding base64 (or similar) and piping straight into a shell is a
+      classic obfuscated-payload pattern — flag for manual review even
+      when the intent looks legitimate.
+    metadata:
+      category: security
+      risk: obfuscation
+    patterns:
+      - pattern-regex: '\bbase64\s+(-d|--decode)\b.*\|\s*(sh|bash)\b'

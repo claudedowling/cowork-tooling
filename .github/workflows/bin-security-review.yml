@@ -1,0 +1,84 @@
+name: bin-security-review
+on:
+  pull_request:
+    paths:
+      - 'bin/**'
+
+permissions:
+  contents: read
+  pull-requests: read
+  id-token: write
+
+jobs:
+  security-review:
+    name: claude security review (bin/)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Claude security review
+        id: claude-security
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            You are a narrow security reviewer for exactly one directory:
+            bin/. These scripts are deployed read-only to Cowork sessions
+            and run with git push credentials and a 1Password
+            service-account token (see README.md "Security model" and
+            .semgrep/bin-security.yml for the threat model this repo
+            already documents).
+
+            Run this to see what changed:
+              git diff origin/${{ github.event.pull_request.base.ref }}...HEAD -- bin/
+
+            Look ONLY for:
+              - Data exfiltration: any new network call — especially one
+                that could carry a credential, token, or repo content —
+                to a host other than github.com, api.github.com, or
+                *.1password.com.
+              - Credential misuse: any new read, print, log, echo, or
+                transmission of GH_TOKEN, OP_SERVICE_ACCOUNT_TOKEN,
+                op_token, or a resolved token, beyond
+                git-credential-op's existing get-only stdout contract to
+                git's credential-helper protocol.
+              - Destructive operations: rm/mv/truncate/overwrite on a
+                path built from a variable, especially one that's
+                unquoted, unvalidated, or could be empty.
+              - Obfuscation: base64/hex/rot13-decoded or otherwise
+                encoded content that gets executed, evaluated, or
+                sourced.
+              - Trust-boundary tampering: changes to session-init.sh,
+                git-credential-op, or op-run.sh that widen what gets
+                sourced, executed, or trusted, or that change what a
+                credential helper does with the token it resolves.
+
+            Do NOT comment on style, POSIX-compliance, formatting, or
+            anything ShellCheck already covers — that's a separate,
+            required check. Only flag things in the categories above.
+
+            When done, write your verdict to security-verdict.txt in the
+            repo root and nothing else:
+              - first line: exactly PASS, or exactly FLAG
+              - if FLAG, each following line: `file:line — finding`
+
+            If bin/ has no changes in this diff, write PASS.
+
+          claude_args: '--allowed-tools "Bash(git diff:*) Write(security-verdict.txt)"'
+
+      - name: Enforce verdict
+        run: |
+          set -euo pipefail
+          if [ ! -f security-verdict.txt ]; then
+            echo "::error::security review did not produce security-verdict.txt"
+            exit 1
+          fi
+          verdict="$(head -n1 security-verdict.txt)"
+          cat security-verdict.txt
+          if [ "$verdict" != "PASS" ]; then
+            echo "::error::bin/ security review flagged this diff — see verdict above"
+            exit 1
+          fi
