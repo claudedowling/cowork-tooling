@@ -1,11 +1,9 @@
 # Require review on the pieces that guard main's trust boundary, so a PR
-# can't quietly weaken the checks that review it or the scripts they
-# protect. Only takes effect once "Require review from Code Owners" is
-# turned on in branch protection for main (admin-only setting) — see
-# .github/workflow-proposals/README.md.
+# can't quietly weaken the checks that review it or the scripts they protect.
+# Only takes effect once "Require review from Code Owners" is turned on in
+# branch protection for main (admin-only setting); tracked in issue #3.
 
-/bin/                          @stevedowling
-/.github/workflows/            @stevedowling
-/.github/workflow-proposals/   @stevedowling
-/.semgrep/                     @stevedowling
-/.shellcheckrc                 @stevedowling
+/bin/          @stevedowling
+/.github/      @stevedowling
+/.semgrep/     @stevedowling
+/.shellcheckrc @stevedowling
