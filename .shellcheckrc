@@ -1,0 +1,6 @@
+# ShellCheck config for bin/. Dialect (sh vs bash) is taken from each
+# script's shebang; this just turns on a couple of optional checks that
+# matter for scripts sitting on a credential/push-access trust boundary.
+enable=quote-safe-variables
+enable=require-variable-braces
+enable=avoid-nullary-conditions

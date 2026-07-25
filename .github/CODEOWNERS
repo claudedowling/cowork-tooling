@@ -1,0 +1,13 @@
+# Require review on the pieces that guard main's trust boundary, so a PR
+# can't quietly weaken the checks that review it or the scripts they
+# protect. Only takes effect once "Require review from Code Owners" is
+# turned on in branch protection for main (admin-only setting) — see
+# .github/workflow-proposals/README.md.
+#
+# NOTE: replace @claudedowling below if the intended reviewer
+# (stevedowling) has a different GitHub handle.
+/bin/                          @claudedowling
+/.github/workflows/            @claudedowling
+/.github/workflow-proposals/   @claudedowling
+/.semgrep/                     @claudedowling
+/.shellcheckrc                 @claudedowling

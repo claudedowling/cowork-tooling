@@ -1,0 +1,25 @@
+name: shellcheck
+on:
+  pull_request:
+    paths:
+      - 'bin/**'
+  push:
+    branches: [main]
+    paths:
+      - 'bin/**'
+
+jobs:
+  lint:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run ShellCheck
+        run: |
+          set -euo pipefail
+          VERSION=0.9.0
+          curl -sSL "https://github.com/koalaman/shellcheck/releases/download/v${VERSION}/shellcheck-v${VERSION}.linux.x86_64.tar.xz" \
+            | tar -xJ "shellcheck-v${VERSION}/shellcheck"
+          mv "shellcheck-v${VERSION}/shellcheck" ./shellcheck
+          ./shellcheck --severity=warning bin/*

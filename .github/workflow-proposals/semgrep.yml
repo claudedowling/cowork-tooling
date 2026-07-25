@@ -1,0 +1,27 @@
+name: semgrep-bin-security
+on:
+  pull_request:
+    paths:
+      - 'bin/**'
+      - '.semgrep/**'
+  push:
+    branches: [main]
+    paths:
+      - 'bin/**'
+      - '.semgrep/**'
+
+jobs:
+  scan:
+    name: semgrep (bin/ custom ruleset)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install semgrep
+        run: pip install --user 'semgrep>=1.70.0,<2.0.0'
+
+      - name: Run custom bin/ ruleset
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$PATH"
+          semgrep --config .semgrep/bin-security.yml bin/ --error
