@@ -3,11 +3,9 @@
 # protect. Only takes effect once "Require review from Code Owners" is
 # turned on in branch protection for main (admin-only setting) — see
 # .github/workflow-proposals/README.md.
-#
-# NOTE: replace @claudedowling below if the intended reviewer
-# (stevedowling) has a different GitHub handle.
-/bin/                          @claudedowling
-/.github/workflows/            @claudedowling
-/.github/workflow-proposals/   @claudedowling
-/.semgrep/                     @claudedowling
-/.shellcheckrc                 @claudedowling
+
+/bin/                          @stevedowling
+/.github/workflows/            @stevedowling
+/.github/workflow-proposals/   @stevedowling
+/.semgrep/                     @stevedowling
+/.shellcheckrc                 @stevedowling
