@@ -57,9 +57,11 @@ to function. They are excluded from version control by design; see `.gitignore`.
   required check on protected `main` is the guarantee.
 - Anything that has ever been committed to this public repo should be treated
   as compromised and rotated.
-- `gitleaks` catches secrets, not harmful script logic. A second required
-  check — ShellCheck + a custom Semgrep ruleset + a narrow Claude security
-  review, all scoped to `bin/` — is staged in
-  `.github/workflow-proposals/` pending activation (see that folder's
-  README); it reviews `bin/` changes for exfiltration, credential misuse,
-  destructive commands, and obfuscation before they can reach `main`.
+- `gitleaks` catches secrets, not harmful script logic. A second layer scoped
+  to `bin/` lives in `.github/workflows/`: `shellcheck.yml` (correctness),
+  `semgrep.yml` (a custom ruleset in `.semgrep/bin-security.yml`), and
+  `bin-security-review.yml` (a narrow Claude review). Together they check `bin/`
+  changes for exfiltration, credential misuse, destructive commands, and
+  obfuscation. They run as non-required checks for now; issue #3 tracks
+  promoting them to required status checks after a false-positive shakedown and
+  turning on Code Owner review via `.github/CODEOWNERS`.
