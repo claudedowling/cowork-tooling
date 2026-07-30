@@ -185,38 +185,26 @@ for d in "$M"/repos/*/; do
   fi
 done
 
-# 7. Deploy bin/ as a read-only mirror of this tooling repo's main. The live
-#    bin/ is generated from main; never hand-edit it. Changes go through the
-#    repo (branch -> gitleaks check -> auto-merge to main). Uses cp (a plain
-#    write), never unlink/rename, because the Cowork mount rejects those
-#    (the same reason git lock sweeps need the delete approval). The running
-#    script is never overwritten in place: if session-init.sh itself changed
-#    on main it is staged as .new for the next run to pick up.
-echo "== deploy bin/ from $TOOLING_REPO main =="
-TOOLING="$M/repos/$TOOLING_REPO"
-if [ -d "$TOOLING/.git" ]; then
-  "$M/bin/repo-latest" "$TOOLING_REPO" >/dev/null 2>&1 || true
-  onbranch="$(GIT_OPTIONAL_LOCKS=0 git -C "$TOOLING" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
-  dirty="$(GIT_OPTIONAL_LOCKS=0 git -C "$TOOLING" status --porcelain 2>/dev/null)"
-  if [ "$onbranch" = "main" ] && [ -z "$dirty" ]; then
-    self="$(basename "${BASH_SOURCE[0]}")"
-    for f in "$TOOLING"/bin/*; do
-      b="$(basename "$f")"
-      if [ "$b" = "$self" ]; then
-        if ! cmp -s "$f" "$M/bin/$b"; then
-          cp "$f" "$M/bin/$b.new"
-          echo "  $b changed on main -> staged $b.new (re-run session-init to apply)"
-        fi
-      else
-        cp "$f" "$M/bin/$b" && chmod +x "$M/bin/$b"
-      fi
-    done
-    echo "bin/ mirrored from main ($(GIT_OPTIONAL_LOCKS=0 git -C "$TOOLING" rev-parse --short HEAD))"
-  else
-    echo "$TOOLING_REPO on '$onbranch'${dirty:+ (dirty)}; skipping bin/ deploy" >&2
-  fi
-else
-  echo "$TOOLING_REPO not cloned; run \$M/bin/use-repo $TOOLING_REPO then re-run to enable read-only bin deploy" >&2
-fi
-
 echo "== done. Reminder: prefix read-only git with GIT_OPTIONAL_LOCKS=0; branch + PR, never push to the default branch. =="
+
+# 7. Keep the tooling folder a clean, pull-only clone of main. The folder root
+#    is a checkout of this repo; tracked files (bin/, CLAUDE.md, ...) are
+#    updated only from GitHub, never hand-edited. Gitignored local files
+#    (config.sh, .credentials/, .op-env, repos/) are left untouched by the
+#    reset. Edit the tooling via a separate checkout under repos/
+#    (use-repo cowork-tooling), branch + PR.
+#
+#    This runs LAST: reset --hard rewrites tracked files including this running
+#    script, so the reset and exit are one already-parsed line and nothing
+#    executes after it.
+echo "== sync tooling folder to main =="
+if ! git -C "$M" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "tooling folder is not a git clone; skipping sync (run the one-time clone conversion)" >&2
+elif ! git -C "$M" fetch -q origin main 2>/dev/null; then
+  echo "fetch failed; folder not synced (offline?)" >&2
+else
+  b="$(GIT_OPTIONAL_LOCKS=0 git -C "$M" rev-parse --short HEAD)"
+  a="$(GIT_OPTIONAL_LOCKS=0 git -C "$M" rev-parse --short origin/main)"
+  [ "$b" = "$a" ] && echo "already at $a" || echo "syncing $b -> $a"
+  git -C "$M" reset --hard origin/main >/dev/null 2>&1; exit 0
+fi
